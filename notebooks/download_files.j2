@@ -1,0 +1,15 @@
+#!/bin/bash
+set -euo pipefail
+
+{% for values in values_set %}
+if [ ! -f {{ values.success_file }} ]; then
+    echo "Getting DBG dataset for date {{ values.date }}"
+    mkdir -p {{ values.download_folder }}/{{ values.date }}
+    aws s3 sync {{ values.source_bucket }}/{{ values.date }} {{ values.download_folder }}/{{ values.date }} --no-sign-request
+    touch {{ values.success_file }}
+else
+    echo "DBG dataset for date {{ values.date }} already exists"
+fi
+{% endfor %}
+
+# End
