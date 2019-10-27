@@ -124,38 +124,51 @@ def timeseries_plot(mnemonics, metrics, data=None, interval = None, bucket = Non
         selected.columns = selected_columns          
         ax = selected.plot( ax = ax)  
         ax.set_xticklabels(data.index, rotation=90) 
-        
-        
+
+
 # Function to convert data frames containing time series data to JSON serialized data that DeepAR works with
-def json_serialize(data, start, end, target_column, covariate_columns, interval):
+def json_serialize(
+        data: pd.DataFrame,
+        start: str,
+        end: str,
+        target_column: str,
+        covariate_columns: List[str, ],
+        interval: str
+) -> List[Dict[str, Any]]:
     timeseries = {}
 
     for i, col in enumerate(data.columns):
-        metric = col[col.find("-")+1:]
         stock = col[:col.find("-")]
+        metric = col[col.find("-") + 1:]
+
         if metric == target_column:
             if stock in timeseries.keys():
-                timeseries[stock]["target"] = data.iloc[:,i][start:end]
+                timeseries[stock]["target"] = data.iloc[:, i][start:end]
             else:
+                timestamp = datetime.datetime.strptime(str(start), "%Y-%m-%d %H:%M:%S")
+                timestamp = datetime.datetime.strftime(timestamp, "%Y-%m-%d %H:%M:%S")
+
                 timeseries[stock] = {}
-                timeseries[stock]["start"] = str(pd.Timestamp(datetime.datetime.strptime(str(start), "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S"), freq = interval))
-                timeseries[stock]["target"] = data.iloc[:,i][start:end]            
-            print("Time series for {} added".format(stock))
+                timeseries[stock]["start"] = str(pd.Timestamp(timestamp, freq=interval))
+                timeseries[stock]["target"] = data.iloc[:, i][start:end]
+
+            print(f"Time series for {stock} added")
+
         elif metric in covariate_columns:
             if stock in timeseries.keys():
                 if "dynamic_feat" in timeseries[stock]:
                     dynamic_feat = timeseries[stock]["dynamic_feat"]
-                    dynamic_feat.append(data.iloc[:,i][start:end])
+                    dynamic_feat.append(data.iloc[:, i][start:end])
                 else:
-                    dynamic_feat = []
-                    dynamic_feat.append(data.iloc[:,i][start:end])
+                    dynamic_feat = [data.iloc[:, i][start:end]]
                     timeseries[stock]["dynamic_feat"] = dynamic_feat
             else:
                 timeseries[stock] = {}
-                dynamic_feat = []
-                dynamic_feat.append(data.iloc[:,i])
-                timeseries[stock]["dynamic_feat"] = dynamic_feat            
-            print("Dynamic Feature - {} for {} added".format(metric, stock))
+                dynamic_feat = [data.iloc[:, i]]
+                timeseries[stock]["dynamic_feat"] = dynamic_feat
+
+            print(f"Dynamic Feature - {metric} for {stock} added")
+
         else:
             pass
 
@@ -167,28 +180,40 @@ def json_serialize(data, start, end, target_column, covariate_columns, interval)
         }
         for ts in timeseries.values()
     ]   
+
     return json_data
 
 
 # Function to first split the data into training and test sets, and then to JSON serialize both sets
-def generate_train_test_set(data, target_column, covariate_columns, interval, train_test_split=0.9, num_test_windows=4):
+def generate_train_test_set(
+        data: pd.DataFrame,
+        target_column: str,
+        covariate_columns: List[str, ],
+        interval: str,
+        train_test_split: float = 0.9,
+        num_test_windows: int = 4
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], str, str]:
     num_samples = len(data.index.values)
     num_train = int(train_test_split * num_samples)
     num_test = int((num_samples - num_train)/num_test_windows)
-    print("Sample Size = {}, Training Set: {}, Test Set: {} * {}".format(num_samples, num_train, num_test_windows, num_test))
+    print(f"Sample Size = {num_samples}, Training Set: {num_train}, Test Set: {num_test_windows} * {num_test}")
+
     train_start_dt = data.index[0]
-    train_end_dt = data.index[num_train - 1]   
-    print("Training Set: Starts at - {}, Ends at - {}".format(train_start_dt, train_end_dt))
+    train_end_dt = data.index[num_train - 1]
+    print(f"Training Set: Starts at - {train_start_dt}, Ends at - {train_end_dt}")
+
     train_data = json_serialize(data, train_start_dt, train_end_dt, target_column, covariate_columns, interval)
     test_data = []
     test_start_date = train_start_dt
+
     for i in range(num_test_windows):
-        test_end_dt = data.index.values[num_train + i*num_test - 1]
+        test_end_dt = data.index.values[num_train + i * num_test - 1]
         test_data.extend(json_serialize(data, test_start_date, test_end_dt, target_column, covariate_columns, interval))
+
     return train_data, test_data, train_start_dt, train_end_dt
 
 
-#Function to write JSON serialized training and test data into S3 bucket, which will later be fed to training container
+# Function to write JSON serialized training and test data into S3 bucket, which will later be fed to training container
 def write_dicts_to_file(data, interval, bucket, path, channel):
     fs = s3fs.S3FileSystem()
     with fs.open("{}/{}/{}/{}/{}.json".format(bucket, path, interval, channel, channel), "wb") as fp:
