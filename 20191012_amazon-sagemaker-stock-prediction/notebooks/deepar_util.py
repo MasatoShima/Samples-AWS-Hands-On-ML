@@ -1,55 +1,82 @@
-
 ######################################################################
 # This file contains utility functions to load test data from file,  #
 # and invoke DeepAR predictor and plot the observed and target data. #
 ######################################################################
-
 import io
 import math
 import json
-import s3fs
-import boto3
 import datetime
+from typing import *
+
 import pandas as pd
 import numpy as np
-import sagemaker
 import matplotlib
 import matplotlib.pyplot as plt
 
+import boto3
+import s3fs
+import sagemaker
+
+
 # Function to Format DBG stock market data into a format suitable for DeepAR algorithm
-def deeparize(stockdata, stocksymbols, interval, metrices = None):
+def deeparize(
+        stockdata: pd.DataFrame,
+        stocksymbols: List[str, ],
+        interval: str,
+        metrices: List[str, ] or None = None
+) -> pd.DataFrame:
     data_feed = pd.DataFrame()
-    data_feed['CalcDateTime'] = pd.to_datetime(pd.Series(sorted(list(stockdata.CalcDateTime.unique()))),infer_datetime_format=True)
-    data_feed.index = data_feed['CalcDateTime']
-    data_feed.drop('CalcDateTime', axis=1, inplace = True)
 
-    for mnemonic in stocksymbols:
+    calc_date_time = pd.to_datetime(
+        pd.Series(sorted(list(stockdata["CalcDateTime"].unique()))),
+        infer_datetime_format=True
+    )
 
-        mnemonic_data = stockdata[stockdata.Mnemonic == mnemonic].copy()
-        mnemonic_data.index = mnemonic_data['CalcDateTime']
+    data_feed["CalcDateTime"] = calc_date_time
+    data_feed.index = data_feed["CalcDateTime"]
+    data_feed.drop("CalcDateTime", axis=1, inplace=True)
+
+    for stocksymbol in stocksymbols:
+        mnemonic_data = stockdata.query(f"Mnemonic == '{stocksymbol}'").copy()
+        mnemonic_data.index = mnemonic_data["CalcDateTime"]
         mnemonic_data = mnemonic_data.sort_index()
-        mnemonic_data = mnemonic_data.iloc[:,-6:]
+        mnemonic_data = mnemonic_data.iloc[:, -6:]
+
         if metrices is None:
             metrices = mnemonic_data.columns.values
+
         for col in metrices:
             metric_col = mnemonic_data[col].to_frame()
-            metric_col.columns = ["{}-{}".format(mnemonic,col)]
+            metric_col.columns = [f"{stocksymbol}-{col}"]
             data_feed = data_feed.add(metric_col, fill_value=0)            
             
     data_feed = data_feed.resample(interval).mean()       
-    data_feed.fillna(method='backfill', limit=1, inplace=True)
-    data_feed.fillna(method='ffill', inplace=True) 
+    data_feed.fillna(method="backfill", limit=1, inplace=True)
+    data_feed.fillna(method="ffill", inplace=True) 
     data_feed.fillna(value=0, inplace=True)
+
     return data_feed
 
 
 # Function to load resampled stock data from a specified S3 location
-def load_resampled_from_s3(interval, bucket, s3_data_key, mnemonics=None, metrices = None):
-    s3 = boto3.client('s3')
-    obj = s3.get_object(Bucket=bucket, Key="{}/{}/resampled_stockdata.csv".format(s3_data_key, interval))
-    loaded = pd.read_csv(io.BytesIO(obj['Body'].read()), parse_dates=True)
+def load_resampled_from_s3(
+        interval: str,
+        s3_data_bucket: str,
+        s3_data_key: str,
+        mnemonics: List[str, ] or None = None,
+        metrices: List[str, ] or None = None
+) -> Tuple[pd.DataFrame, List[str, ]]:
+    s3 = boto3.client("s3")
+    obj = s3.get_object(
+        Bucket=s3_data_bucket,
+        Key=f"{s3_data_key}/{interval}/resampled_stockdata.csv"
+    )
+
+    loaded = pd.read_csv(io.BytesIO(obj["Body"].read()), parse_dates=True)
+
     if mnemonics is None:
         mnemonics = list(loaded.Mnemonic.unique())
+
     return deeparize(loaded, mnemonics, interval, metrices), mnemonics
 
 
@@ -60,7 +87,7 @@ def metrics_plot(mnemonics, metrics = None, data=None, interval = None, bucket =
         data, symbols = load_resampled_from_s3(interval, bucket, s3_key)  
         
     if metrics is None:
-        metrics = ['MinPrice', 'MaxPrice', 'StartPrice', 'EndPrice', 'TradedVolume', 'NumberOfTrades']
+        metrics = ["MinPrice", "MaxPrice", "StartPrice", "EndPrice", "TradedVolume", "NumberOfTrades"]
 
     fig, axs = plt.subplots(math.ceil((len(metrics) * len(mnemonics))/3), 3, figsize=(20, 20), sharex=True)
     axx = axs.ravel()
@@ -71,13 +98,13 @@ def metrics_plot(mnemonics, metrics = None, data=None, interval = None, bucket =
             data["{}-{}".format(mnemonic,metric)].plot(ax=axx[i])
             axx[i].set_xlabel("date")    
             axx[i].set_ylabel("{}-{}".format(mnemonic,metric))   
-            axx[i].grid(which='minor', axis='x')
+            axx[i].grid(which="minor", axis="x")
             axx[i].set_xticklabels(data.index, rotation=90) 
             i = i+1
             
             
 # Function to plot specified metrices for specified stock, all superimposed on a single plot            
-matplotlib.rcParams['figure.figsize'] = (25, 17) # use bigger graphs
+matplotlib.rcParams["figure.figsize"] = (25, 17) # use bigger graphs
 def timeseries_plot(mnemonics, metrics, data=None, interval = None, bucket = None, s3_key = None):
 
     if data is None and interval is not None and bucket is not None and s3_key is not None:
@@ -85,10 +112,10 @@ def timeseries_plot(mnemonics, metrics, data=None, interval = None, bucket = Non
     ax = None
     for mnemonic in mnemonics:
         selected = pd.DataFrame()
-        selected['CalcDateTime'] = pd.Series(sorted(list(data.index.unique())))
-        selected.index = selected['CalcDateTime']
+        selected["CalcDateTime"] = pd.Series(sorted(list(data.index.unique())))
+        selected.index = selected["CalcDateTime"]
         selected = selected.sort_index()
-        selected.drop('CalcDateTime', axis=1, inplace = True)
+        selected.drop("CalcDateTime", axis=1, inplace = True)
         for metric in metrics:
             selected[metric] = data["{}-{}".format(mnemonic,metric)]
         selected_columns = list(selected.columns)
@@ -104,8 +131,8 @@ def json_serialize(data, start, end, target_column, covariate_columns, interval)
     timeseries = {}
 
     for i, col in enumerate(data.columns):
-        metric = col[col.find('-')+1:]
-        stock = col[:col.find('-')]
+        metric = col[col.find("-")+1:]
+        stock = col[:col.find("-")]
         if metric == target_column:
             if stock in timeseries.keys():
                 timeseries[stock]["target"] = data.iloc[:,i][start:end]
@@ -164,10 +191,10 @@ def generate_train_test_set(data, target_column, covariate_columns, interval, tr
 #Function to write JSON serialized training and test data into S3 bucket, which will later be fed to training container
 def write_dicts_to_file(data, interval, bucket, path, channel):
     fs = s3fs.S3FileSystem()
-    with fs.open("{}/{}/{}/{}/{}.json".format(bucket, path, interval, channel, channel), 'wb') as fp:
+    with fs.open("{}/{}/{}/{}/{}.json".format(bucket, path, interval, channel, channel), "wb") as fp:
         for d in data:
             fp.write(json.dumps(d).encode("utf-8"))
-            fp.write("\n".encode('utf-8'))
+            fp.write("\n".encode("utf-8"))
     return "s3://{}/{}/{}/{}/".format(bucket, path, interval, channel)        
 
 
@@ -210,19 +237,19 @@ class DeepARPredictor(sagemaker.predictor.RealTimePredictor):
             "configuration": configuration
         }
         
-        return json.dumps(http_request_data).encode('utf-8')
+        return json.dumps(http_request_data).encode("utf-8")
     
     def __decode_response(self, response, freq, prediction_time, return_samples):
         # we only sent one time series so we only receive one in return
         # however, if possible one will pass multiple time series as predictions will then be faster
-        predictions = json.loads(response.decode('utf-8'))['predictions'][0]
-        prediction_length = len(next(iter(predictions['quantiles'].values())))
+        predictions = json.loads(response.decode("utf-8"))["predictions"][0]
+        prediction_length = len(next(iter(predictions["quantiles"].values())))
         prediction_index = pd.DatetimeIndex(start=prediction_time, freq=freq, periods=prediction_length)        
         if return_samples:
-            dict_of_samples = {'sample_' + str(i): s for i, s in enumerate(predictions['samples'])}
+            dict_of_samples = {"sample_" + str(i): s for i, s in enumerate(predictions["samples"])}
         else:
             dict_of_samples = {}
-        return pd.DataFrame(data={**predictions['quantiles'], **dict_of_samples}, index=prediction_index)
+        return pd.DataFrame(data={**predictions["quantiles"], **dict_of_samples}, index=prediction_index)
 
     def set_frequency(self, freq):
         self.freq = freq
@@ -259,8 +286,8 @@ def query_for_stock(stock_to_predict, target_column, covariate_columns, data, pr
     dynamic_feat = []
     
     for i, col in enumerate(data.columns):
-        stock = col[:col.find('-')]
-        metric = col[col.find('-')+1:]
+        stock = col[:col.find("-")]
+        metric = col[col.find("-")+1:]
         if stock == stock_to_predict: 
             if metric == target_column:
                 ts = data.iloc[:,i][startloc:endloc-prediction_length]
@@ -322,7 +349,7 @@ def plot(
     
     if cat is not None:
         args["cat"] = cat
-        ax.text(0.9, 0.9, 'cat = {}'.format(cat), transform=ax.transAxes)
+        ax.text(0.9, 0.9, "cat = {}".format(cat), transform=ax.transAxes)
 
     # call the end point to get the prediction
     prediction = predictor.predict(**args)
@@ -330,28 +357,28 @@ def plot(
     if show_samples: 
         for key in prediction.keys():
             if "sample" in key:
-                prediction[key].plot(color='lightskyblue', alpha=0.2, label='_nolegend_')
+                prediction[key].plot(color="lightskyblue", alpha=0.2, label="_nolegend_")
                 
                 
     # plot the target
     target_section = stockts[forecast_date-plot_history:forecast_date+prediction_length]
-    target_section.plot(color="black", label='target')
+    target_section.plot(color="black", label="target")
     
     # plot the confidence interval and the median predicted
     ax.fill_between(
         prediction[str(low_quantile)].index, 
         prediction[str(low_quantile)].values, 
         prediction[str(up_quantile)].values, 
-        color="b", alpha=0.3, label='{}% confidence interval'.format(confidence)
+        color="b", alpha=0.3, label="{}% confidence interval".format(confidence)
     )
-    prediction["0.5"].plot(color="b", label='P50')
+    prediction["0.5"].plot(color="b", label="P50")
     ax.legend(loc=2)    
     
     # fix the scale as the samples may change it
     #ax.set_ylim(target_section.min() * 0.5, target_section.max() * 1.5)
     ax.set_ylim(ts.min(), ts.max())
     
-    '''
+    """
     if dynamic_feat is not None:
         for i, f in enumerate(dynamic_feat, start=1):
             ax = plt.subplot(len(dynamic_feat) * 2, 1, len(dynamic_feat) + i, sharex=ax)
@@ -359,5 +386,5 @@ def plot(
                 index=pd.DatetimeIndex(start=target_ts.index[0], freq=target_ts.index.freq, periods=len(f)),
                 data=f
             )
-            feat_ts[forecast_date-plot_history:forecast_date+prediction_length].plot(ax=ax, color='g')
-    '''
+            feat_ts[forecast_date-plot_history:forecast_date+prediction_length].plot(ax=ax, color="g")
+    """
