@@ -196,24 +196,54 @@ def generate_train_test_set(
     num_samples = len(data.index.values)
     num_train = int(train_test_split * num_samples)
     num_test = int((num_samples - num_train)/num_test_windows)
-    print(f"Sample Size = {num_samples}, Training Set: {num_train}, Test Set: {num_test_windows} * {num_test}")
+
+    print(
+        f"Sample Size = {num_samples}, "
+        f"Training Set: {num_train}, "
+        f"Test Set: {num_test_windows} * {num_test}"
+    )
 
     train_start_dt = data.index[0]
     train_end_dt = data.index[num_train - 1]
-    print(f"Training Set: Starts at - {train_start_dt}, Ends at - {train_end_dt}")
 
-    train_data = json_serialize(data, train_start_dt, train_end_dt, target_column, covariate_columns, interval)
+    print(
+        f"Training Set: "
+        f"Starts at - {train_start_dt}, "
+        f"Ends at - {train_end_dt}"
+    )
+
+    train_data = json_serialize(
+        data,
+        train_start_dt,
+        train_end_dt,
+        target_column,
+        covariate_columns,
+        interval
+    )
+
     test_data = []
+
     test_start_date = train_start_dt
 
     for i in range(num_test_windows):
         test_end_dt = data.index.values[num_train + i * num_test - 1]
-        test_data.extend(json_serialize(data, test_start_date, test_end_dt, target_column, covariate_columns, interval))
+
+        test_data.extend(
+            json_serialize(
+                data,
+                test_start_date,
+                test_end_dt,
+                target_column,
+                covariate_columns,
+                interval
+            )
+        )
 
     return train_data, test_data, train_start_dt, train_end_dt
 
 
-# Function to write JSON serialized training and test data into S3 bucket, which will later be fed to training container
+# Function to write JSON serialized training and test data into S3 bucket,
+# which will later be fed to training container
 def write_dicts_to_file(data, interval, bucket, path, channel):
     fs = s3fs.S3FileSystem()
     with fs.open("{}/{}/{}/{}/{}.json".format(bucket, path, interval, channel, channel), "wb") as fp:
